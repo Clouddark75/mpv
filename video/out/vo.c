@@ -1054,15 +1054,22 @@ static bool render_frame(struct vo *vo)
     if (in->dropped_frame) {
         MP_STATS(vo, "drop-vo");
     } else {
-        // If the initial redraw request was true and mpv is still playing,
-        // then we can clear it here since the next loop will guarantee that
-        // we draw whatever is needed. However if there initially is
+        // If the initial redraw request was true or mpv is still playing,
+        // then we can clear it here since we just performed a redraw, or the
+        // next loop will draw what we need. However if there initially is
         // no redraw request, then something can change this (i.e. the OSD)
         // while the vo was unlocked. If we are paused, don't touch
-        // in->request_redraw in that case and let do_redraw do the work later.
+        // in->request_redraw in that case.
+    #ifdef __ANDROID__
+        // Android AImageReader needs aggressive clearing to prevent buffer saturation
+        if (request_redraw || !in->paused)
+            in->request_redraw = false;
+    #else
+        // Desktop: More conservative to fix OSD issues when paused
         if (request_redraw && !in->paused)
             in->request_redraw = false;
-    }
+    #endif
+}
 
     if (in->current_frame && in->current_frame->num_vsyncs &&
         in->current_frame->display_synced)
