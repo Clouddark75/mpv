@@ -661,16 +661,16 @@ function register_event_handler(t) {
     var handler_id = "input-event/" + input_handle_counter++;
     latest_handler_id = handler_id;
 
-    mp.register_script_message(handler_id, function (type, args) {
-        if (type == "closed")
+    mp.register_script_message(handler_id, function (event, args) {
+        if (event == "closed")
             mp.unregister_script_message(handler_id);
 
-        if (!t[type] || (latest_handler_id !== handler_id && type !== "closed"))
+        if (!t[event] || (latest_handler_id !== handler_id && event !== "closed"))
             return;
 
         args = args ? JSON.parse(args) : [];
 
-        if (type == "complete") {
+        if (event == "complete") {
             var complete = function(completions, completion_pos, completion_append) {
                 if (completions == undefined)
                     return;
@@ -686,9 +686,9 @@ function register_event_handler(t) {
             }
 
             args[1] = complete;
-            complete.apply(null, t[type].apply(null, args));
+            complete.apply(null, t[event].apply(null, args));
         } else {
-            t[type].apply(null, args)
+            t[event].apply(null, args)
         }
     })
 
@@ -705,8 +705,13 @@ function input_request(t) {
 
 mp.input = {
     get: function(t) {
-        t.id = t.id || mp.script_name + (t.prompt || "");
+        t.prompt = String(t.prompt || "")
+        t.id = t.id || mp.script_name + t.prompt;
         latest_log_id = t.id;
+        return input_request(t);
+    },
+    select: function(t) {
+        t.args = t.args || [];
         return input_request(t);
     },
     terminate: function () {
@@ -738,7 +743,6 @@ mp.input = {
         }
     }
 }
-mp.input.select = input_request;
 
 /**********************************************************************
  *  various

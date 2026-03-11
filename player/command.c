@@ -536,9 +536,7 @@ static int mp_property_filename(void *ctx, struct m_property *prop,
         if (strcmp(ka->key, "no-ext") == 0) {
             action = ka->action;
             arg = ka->arg;
-            bstr root;
-            if (mp_splitext(f, &root))
-                f = bstrto0(filename, root);
+            f = mp_strip_ext(filename, f);
         }
     }
     int r = m_property_strdup_ro(action, arg, f);
@@ -5177,7 +5175,7 @@ static void cmd_overlay_add(void *pcmd)
         MP_ERR(mpctx, "overlay-add: invalid id %d\n", id);
         goto error;
     }
-    if (w <= 0 || h <= 0 || stride < w * 4 || (stride % 4)) {
+    if (w <= 0 || h <= 0 || stride < w * 4 || (stride % 4) || offset < 0) {
         MP_ERR(mpctx, "overlay-add: inconsistent parameters\n");
         goto error;
     }
@@ -5208,7 +5206,7 @@ static void cmd_overlay_add(void *pcmd)
     } else {
         fd = open(file, O_RDONLY | O_BINARY | O_CLOEXEC);
     }
-    int map_size = 0;
+    size_t map_size = 0;
     if (fd >= 0) {
         map_size = offset + h * stride;
         void *m = mmap(NULL, map_size, PROT_READ, MAP_SHARED, fd, 0);
@@ -5610,15 +5608,23 @@ void run_command(struct MPContext *mpctx, struct mp_cmd *cmd,
 
     if (cmd->flags & MP_EXPAND_PROPERTIES) {
         for (int n = 0; n < cmd->nargs; n++) {
-            if (cmd->args[n].type->type == CONF_TYPE_STRING) {
-                char *s = mp_property_expand_string(mpctx, cmd->args[n].v.s);
+            const m_option_type_t *type = cmd->args[n].type->type;
+            char **list = NULL;
+            if (type == CONF_TYPE_STRING)
+                list = &cmd->args[n].v.s;
+            else if (type == CONF_TYPE_STRING_LIST || type == CONF_TYPE_KV_LIST)
+                list = cmd->args[n].v.str_list;
+            for (; list && *list; list++) {
+                char *s = mp_property_expand_string(mpctx, *list);
                 if (!s) {
                     ctx->success = false;
                     mp_cmd_ctx_complete(ctx);
                     return;
                 }
-                talloc_free(cmd->args[n].v.s);
-                cmd->args[n].v.s = s;
+                talloc_free(*list);
+                *list = s;
+                if (type == CONF_TYPE_STRING)
+                    break;
             }
         }
     }
@@ -5987,9 +5993,13 @@ static void cmd_playlist_play_index(void *p)
     struct MPContext *mpctx = cmd->mpctx;
     struct playlist *pl = mpctx->playlist;
     int pos = cmd->args[0].v.i;
+    bool preserve_options = cmd->num_args >= 2 && cmd->args[1].v.b;
 
     if (pos == -2)
         pos = playlist_entry_to_index(pl, pl->current);
+
+    if (preserve_options && pl->current && pos == pl->current->pl_index)
+        pl->current->reloading = true;
 
     mp_set_playlist_entry(mpctx, playlist_entry_from_index(pl, pos));
     if (cmd->on_osd & MP_ON_OSD_MSG)
@@ -6912,7 +6922,8 @@ static void cmd_mouse(void *p)
     if (button == -1) {// no button
         if (pre_key)
             mp_input_put_key_artificial(mpctx->input, pre_key, 1);
-        mp_input_set_mouse_pos_artificial(mpctx->input, x, y);
+        if (pre_key != MP_KEY_MOUSE_LEAVE)
+            mp_input_set_mouse_pos_artificial(mpctx->input, x, y);
         return;
     }
     if (button < 0 || button >= MP_KEY_MOUSE_BTN_COUNT) {// invalid button
@@ -6930,8 +6941,10 @@ static void cmd_mouse(void *p)
     button += dbc ? MP_MBTN_DBL_BASE : MP_MBTN_BASE;
     if (pre_key)
         mp_input_put_key_artificial(mpctx->input, pre_key, 1);
-    mp_input_set_mouse_pos_artificial(mpctx->input, x, y);
-    mp_input_put_key_artificial(mpctx->input, button, 1);
+    if (pre_key != MP_KEY_MOUSE_LEAVE) {
+        mp_input_set_mouse_pos_artificial(mpctx->input, x, y);
+        mp_input_put_key_artificial(mpctx->input, button, 1);
+    }
 }
 
 static void cmd_key(void *p)
@@ -7256,6 +7269,7 @@ const struct mp_cmd_def mp_cmds[] = {
         {
             {"index", OPT_CHOICE(v.i, {"current", -2}, {"none", -1}),
                 M_RANGE(-1, INT_MAX)},
+            {"preserve-options", OPT_BOOL(v.b), .flags = MP_CMD_OPT_ARG},
         }
     },
     { "playlist-shuffle", cmd_playlist_shuffle, },
