@@ -43,10 +43,8 @@ const struct m_opt_choice_alternatives pl_csp_names[] = {
     {"rgb",         PL_COLOR_SYSTEM_RGB},
     {"xyz",         PL_COLOR_SYSTEM_XYZ},
     {"ycgco",       PL_COLOR_SYSTEM_YCGCO},
-#if PL_API_VER >= 358
     {"ycgco-re",    PL_COLOR_SYSTEM_YCGCO_RE},
     {"ycgco-ro",    PL_COLOR_SYSTEM_YCGCO_RO},
-#endif
     {0}
 };
 
@@ -127,9 +125,7 @@ const struct m_opt_choice_alternatives pl_alpha_names[] = {
     {"auto",        PL_ALPHA_UNKNOWN},
     {"straight",    PL_ALPHA_INDEPENDENT},
     {"premul",      PL_ALPHA_PREMULTIPLIED},
-#if PL_API_VER >= 344
     {"none",        PL_ALPHA_NONE},
-#endif
     {0}
 };
 
@@ -548,4 +544,34 @@ void mp_map_fixp_color(struct pl_transform3x3 *matrix, int ibits, int in[3],
         int ival = lrint(val * ((1 << obits) - 1));
         out[i] = av_clip(ival, 0, (1 << obits) - 1);
     }
+}
+
+enum pl_color_primaries mp_get_best_prim_container(const struct pl_raw_primaries *gamut)
+{
+    enum pl_color_primaries container = PL_COLOR_PRIM_UNKNOWN;
+
+    if (!pl_primaries_valid(gamut))
+        return container;
+
+    const struct pl_raw_primaries *best = NULL;
+    for (enum pl_color_primaries prim = 1; prim < PL_COLOR_PRIM_COUNT; prim++) {
+        const struct pl_raw_primaries *raw = pl_raw_primaries_get(prim);
+        if (pl_raw_primaries_similar(raw, gamut)) {
+            container = prim;
+            best = raw;
+            break;
+        }
+
+        if (pl_primaries_superset(raw, gamut) &&
+            (!best || pl_primaries_superset(best, raw)))
+        {
+            container = prim;
+            best = raw;
+        }
+    }
+
+    if (!best)
+        container = PL_COLOR_PRIM_BT_2020;
+
+    return container;
 }

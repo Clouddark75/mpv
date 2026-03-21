@@ -289,6 +289,7 @@ struct vo_wayland_text_input {
 struct vo_wayland_preferred_description_info {
     struct vo_wayland_state *wl;
     struct pl_color_space csp;
+    struct pl_raw_primaries raw_prim;
     float min_luma;
     float max_luma;
     float ref_luma;
@@ -1343,9 +1344,6 @@ static void data_device_handle_leave(void *data, struct wl_data_device *wl_ddev)
 static void data_device_handle_motion(void *data, struct wl_data_device *wl_ddev,
                                       uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
-    struct vo_wayland_seat *s = data;
-    struct vo_wayland_data_offer *o = s->dnd_offer;
-    wl_data_offer_accept(o->offer, time, o->mime_type);
 }
 
 static void data_device_handle_drop(void *data, struct wl_data_device *wl_ddev)
@@ -1988,12 +1986,24 @@ static const struct wp_fractional_scale_v1_listener fractional_scale_listener = 
 };
 
 #if HAVE_WAYLAND_PROTOCOLS_1_41
-static void log_color_space(struct mp_log *log, struct vo_wayland_preferred_description_info *wd)
+static void log_color_space(struct mp_log *log,
+                           struct vo_wayland_preferred_description_info *wd)
 {
     const struct pl_color_space *csp = &wd->csp;
+
+#define PRIM_ARGS(p) \
+    (p).red.x,   (p).red.y, \
+    (p).green.x, (p).green.y, \
+    (p).blue.x,  (p).blue.y, \
+    (p).white.x, (p).white.y
+
     mp_verbose(log,
         "transfer: %s, primaries: %s\n"
-        "transfer: min_luma=%f, max_luma=%f, ref_luma=%f\n"
+        "          min_luma=%f, max_luma=%f, ref_luma=%f\n"
+        "          raw prims: red.x=%f,   red.y=%f,\n"
+        "                     green.x=%f, green.y=%f,\n"
+        "                     blue.x=%f,  blue.y=%f,\n"
+        "                     white.x=%f, white.y=%f\n"
         "target: min_luma=%f, max_luma=%f, max_cll=%f, max_fall=%f\n"
         "        raw prims: red.x=%f,   red.y=%f,\n"
         "                   green.x=%f, green.y=%f,\n"
@@ -2002,12 +2012,11 @@ static void log_color_space(struct mp_log *log, struct vo_wayland_preferred_desc
         m_opt_choice_str(pl_csp_trc_names,   csp->transfer),
         m_opt_choice_str(pl_csp_prim_names, csp->primaries),
         wd->min_luma, wd->max_luma, wd->ref_luma,
+        PRIM_ARGS(wd->raw_prim),
         csp->hdr.min_luma,  csp->hdr.max_luma,
         csp->hdr.max_cll, csp->hdr.max_fall,
-        csp->hdr.prim.red.x,   csp->hdr.prim.red.y,
-        csp->hdr.prim.green.x, csp->hdr.prim.green.y,
-        csp->hdr.prim.blue.x,  csp->hdr.prim.blue.y,
-        csp->hdr.prim.white.x, csp->hdr.prim.white.y);
+        PRIM_ARGS(csp->hdr.prim));
+#undef PRIM_ARGS
 }
 
 static void supported_intent(void *data, struct wp_color_manager_v1 *color_manager,
@@ -2154,6 +2163,11 @@ static void info_done(void *data, struct wp_image_description_info_v1 *image_des
     if (!wd->icc_file) {
         MP_VERBOSE(wl, "Preferred surface feedback received:\n");
         log_color_space(wl->log, wd);
+        if (!wd->csp.primaries) {
+            wd->csp.primaries = mp_get_best_prim_container(&wd->raw_prim);
+            MP_VERBOSE(wl, "Setting best primary container from raw primaries: %s\n",
+                       m_opt_choice_str(pl_csp_prim_names, wd->csp.primaries));
+        }
         // We don't support extended ranges output where luminance exceeds
         // maximum nominal luminance range (1.0), so switch to PQ.
         if (fabsf(wd->csp.hdr.max_luma / wd->ref_luma - 1.0f) > 1e-4f &&
@@ -2219,6 +2233,15 @@ static void info_primaries(void *data, struct wp_image_description_info_v1 *imag
                            int32_t r_x, int32_t r_y, int32_t g_x, int32_t g_y, int32_t b_x, int32_t b_y,
                            int32_t w_x, int32_t w_y)
 {
+    struct vo_wayland_preferred_description_info *wd = data;
+    wd->raw_prim.red.x = (float)r_x / WAYLAND_COLOR_FACTOR;
+    wd->raw_prim.red.y = (float)r_y / WAYLAND_COLOR_FACTOR;
+    wd->raw_prim.green.x = (float)g_x / WAYLAND_COLOR_FACTOR;
+    wd->raw_prim.green.y = (float)g_y / WAYLAND_COLOR_FACTOR;
+    wd->raw_prim.blue.x = (float)b_x / WAYLAND_COLOR_FACTOR;
+    wd->raw_prim.blue.y = (float)b_y / WAYLAND_COLOR_FACTOR;
+    wd->raw_prim.white.x = (float)w_x / WAYLAND_COLOR_FACTOR;
+    wd->raw_prim.white.y = (float)w_y / WAYLAND_COLOR_FACTOR;
 }
 
 static void info_primaries_named(void *data, struct wp_image_description_info_v1 *image_description_info,
@@ -2328,9 +2351,7 @@ static void supported_alpha_mode(void *data, struct wp_color_representation_mana
     struct vo_wayland_state *wl = data;
     switch (alpha_mode) {
     case WP_COLOR_REPRESENTATION_SURFACE_V1_ALPHA_MODE_PREMULTIPLIED_ELECTRICAL:
-#if PL_API_VER >= 344
-        wl->alpha_map[PL_ALPHA_NONE] = alpha_mode;
-#endif
+        wl->alpha_map[PL_ALPHA_PREMULTIPLIED] = alpha_mode;
         break;
     case WP_COLOR_REPRESENTATION_SURFACE_V1_ALPHA_MODE_STRAIGHT:
         wl->alpha_map[PL_ALPHA_INDEPENDENT] = alpha_mode;
@@ -3781,7 +3802,7 @@ static void set_geometry(struct vo_wayland_state *wl, bool resize)
 
     struct vo_win_geometry geo;
     struct mp_rect screenrc = wl->current_output->geometry;
-    vo_calc_window_geometry(vo, &screenrc, &screenrc, wl->scaling_factor, false, &geo);
+    vo_calc_window_geometry(vo, wl->opts, &screenrc, &screenrc, wl->scaling_factor, false, &geo, NULL);
     vo_apply_window_geometry(vo, &geo);
 
     int gcd = greatest_common_divisor(vo->dwidth, vo->dheight);
