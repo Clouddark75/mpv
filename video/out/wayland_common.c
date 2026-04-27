@@ -1810,20 +1810,6 @@ static void handle_toplevel_config(void *data, struct xdg_toplevel *toplevel,
         width = height = 0;
     }
 
-    if (!wl->geometry_configured) {
-        /* Save initial window size if the compositor gives us a hint here. */
-        bool autofit_or_geometry = opts->geometry.wh_valid || opts->autofit.wh_valid ||
-                                   opts->autofit_larger.wh_valid || opts->autofit_smaller.wh_valid;
-        if (width && height && !autofit_or_geometry) {
-            wl->initial_size_hint = true;
-            wl->window_size = (struct mp_rect){0, 0, width, height};
-            wl->geometry = wl->window_size;
-        } else {
-            wl->override_surface_local = true;
-        }
-        return;
-    }
-
     bool is_maximized = false;
     bool is_fullscreen = false;
     bool is_activated = false;
@@ -1865,32 +1851,50 @@ static void handle_toplevel_config(void *data, struct xdg_toplevel *toplevel,
         }
     }
 
-    if (wl->hidden != is_suspended)
+    /* Only update the toplevel state values if either mpv already has
+     * configured its initial geometry or if the compositor gives us some
+     * initial state to use. */
+
+    if ((wl->geometry_configured || is_suspended) && wl->hidden != is_suspended)
         wl->hidden = is_suspended;
 
-    if (wl->resizing != is_resizing) {
+    if ((wl->geometry_configured || is_resizing) && wl->resizing != is_resizing) {
         wl->resizing = is_resizing;
         wl->resizing_constraint = 0;
     }
 
-    if (opts->fullscreen != is_fullscreen) {
+    if ((wl->geometry_configured || is_fullscreen) && opts->fullscreen != is_fullscreen) {
         wl->state_change = wl->reconfigured;
         opts->fullscreen = is_fullscreen;
         m_config_cache_write_opt(wl->opts_cache, &opts->fullscreen);
     }
 
-    if (opts->window_maximized != is_maximized) {
+    if ((wl->geometry_configured || is_maximized) && opts->window_maximized != is_maximized) {
         wl->state_change = wl->reconfigured;
         opts->window_maximized = is_maximized;
         m_config_cache_write_opt(wl->opts_cache, &opts->window_maximized);
     }
 
-    if (!is_tiled && wl->tiled)
+    if (wl->geometry_configured && !is_tiled && wl->tiled)
         wl->state_change = wl->reconfigured;
 
     wl->tiled = is_tiled;
 
     wl->locked_size = is_fullscreen || is_maximized || is_tiled;
+
+    if (!wl->geometry_configured) {
+        /* Save initial window size if the compositor gives us a hint here. */
+        bool autofit_or_geometry = opts->geometry.wh_valid || opts->autofit.wh_valid ||
+                                   opts->autofit_larger.wh_valid || opts->autofit_smaller.wh_valid;
+        if (width && height && !autofit_or_geometry) {
+            wl->initial_size_hint = true;
+            wl->window_size = (struct mp_rect){0, 0, width, height};
+            wl->geometry = wl->window_size;
+        } else {
+            wl->override_surface_local = true;
+        }
+        return;
+    }
 
     if (wl->requested_decoration)
         request_decoration_mode(wl, wl->requested_decoration);
