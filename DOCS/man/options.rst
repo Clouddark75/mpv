@@ -5757,7 +5757,6 @@ TLS/connection diagnostics), set ``--msg-level=curl=trace``.
 
 ``--curl-http-version=<auto|1.0|1.1|2|2tls|2-prior-knowledge|3|3only>``
     Select the maximum HTTP protocol version libcurl is allowed to negotiate.
-    If libcurl was built without HTTP/3 support, it will fallback to ``auto``.
     (default: ``auto``, i.e. let libcurl pick)
 
 ``--curl-max-redirects=<0-100>``
@@ -7533,11 +7532,15 @@ them.
     encoding into the target colorspace, so after the application of
     ``--target-trc``. (Only for ``--vo=gpu-next``)
 
-``--hdr-reference-white=<auto|10-1000000>``
+``--hdr-reference-white=<auto|10-10000>``
     Specifies the assumed peak brightness of the mastering display for SDR
     content, in cd/m² (nits). This is used as HDR diffuse white level for SDR
     content. Essentially this is the SDR brightness in HDR container.
-    Default is 203 cd/m². (Only for ``--vo=gpu-next``)
+    (Only for ``--vo=gpu-next``)
+
+    In ``auto`` mode (default), the reference white luminance is queried from
+    the system. This is currently only supported on Windows. If the system does
+    not provide a value, 203 cd/m² is assumed.
 
     .. note::
 
