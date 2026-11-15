@@ -122,11 +122,17 @@ FILE *mp_fopen(const char *filename, const char *mode)
 #ifndef _WIN32
 int mp_dup_cloexec(int fd)
 {
-    return fcntl(fd, F_DUPFD_CLOEXEC);
+    return fcntl(fd, F_DUPFD_CLOEXEC, 0);
 }
 
 int mp_make_cloexec_pipe(int pipes[2])
 {
+#if HAVE_PIPE2
+    if (pipe2(pipes, O_CLOEXEC) != 0) {
+        pipes[0] = pipes[1] = -1;
+        return -1;
+    }
+#else
     if (pipe(pipes) != 0) {
         pipes[0] = pipes[1] = -1;
         return -1;
@@ -134,6 +140,7 @@ int mp_make_cloexec_pipe(int pipes[2])
 
     for (int i = 0; i < 2; i++)
         mp_set_cloexec(pipes[i]);
+#endif
     return 0;
 }
 
